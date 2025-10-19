@@ -37,6 +37,10 @@ class MasterAgent:
         Determines which agent to invoke based on conversation stage
         """
         stage = self.conversation_state['stage']
+        
+        print(f"\n[Master Agent] Processing message at stage: {stage}")
+        print(f"[Master Agent] User message: {user_message}")
+        print(f"[Master Agent] Context: {context}")
 
         if stage == 'initial':
             return self._handle_initial_greeting()
@@ -249,18 +253,24 @@ class MasterAgent:
         loan_terms = self.conversation_state.get('loan_terms')
         salary_slip = self.conversation_state.get('uploaded_salary_slip')
 
+        print(f"[Master Agent] Calling underwriting with salary_slip: {salary_slip}")
+
         result = self.underwriting_agent.evaluate_eligibility(
             customer, amount, tenure, loan_terms.get('interest_rate'), salary_slip
         )
 
+        print(f"[Master Agent] Underwriting result: {result}")
+
         self.conversation_state['underwriting_result'] = result
 
         if result.get('approved'):
+            print(f"[Master Agent] ✅ Loan APPROVED by underwriting!")
             # Proceed to sanction
             self.conversation_state['stage'] = 'generating_sanction'
             return self._handle_sanction_generation()
 
         elif result.get('needs_salary_slip'):
+            print(f"[Master Agent] 📄 Salary slip needed")
             self.conversation_state['stage'] = 'awaiting_salary_slip'
             return {
                 'response': result.get('message', "We need additional documents.") + "\n\nPlease upload your latest salary slip to continue.",
@@ -270,6 +280,7 @@ class MasterAgent:
             }
 
         else:
+            print(f"[Master Agent] ❌ Loan REJECTED by underwriting")
             # Loan rejected
             self.conversation_state['stage'] = 'completed'
             rejection_msg = result.get('message', "We are unable to approve your loan at this time.") + "\n\n"
@@ -287,16 +298,21 @@ class MasterAgent:
 
     def _handle_salary_slip_upload(self, context):
         """Handle salary slip upload"""
+        print(f"[Master Agent] _handle_salary_slip_upload called with context: {context}")
+        
         if context and context.get('file_uploaded'):
             file_path = context.get('file_path') or context.get('file_name')
             self.conversation_state['uploaded_salary_slip'] = file_path
 
-            print(f"[Master Agent] Salary slip uploaded: {file_path}")
+            print(f"[Master Agent] ✅ Salary slip uploaded: {file_path}")
             print(f"[Master Agent] Triggering underwriting process...")
 
             self.conversation_state['stage'] = 'processing_underwriting'
+            
+            # Call underwriting directly
             return self._handle_underwriting()
         else:
+            print(f"[Master Agent] ❌ No file in context")
             return {
                 'response': "I haven't received the document yet. Please upload your salary slip (PDF, JPG, or PNG).",
                 'stage': 'awaiting_salary_slip',
@@ -309,9 +325,13 @@ class MasterAgent:
         loan_terms = self.conversation_state['loan_terms']
         underwriting_result = self.conversation_state['underwriting_result']
 
+        print(f"[Master Agent] Generating sanction letter...")
+
         sanction_result = self.sanction_agent.generate_sanction_letter(
             customer, loan_terms, underwriting_result.get('credit_info')
         )
+
+        print(f"[Master Agent] Sanction result: {sanction_result}")
 
         self.conversation_state['sanction_result'] = sanction_result
         self.conversation_state['stage'] = 'completed'

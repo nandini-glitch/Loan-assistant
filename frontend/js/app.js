@@ -46,6 +46,7 @@ function attachEventListeners() {
 
 async function startChat() {
     try {
+        console.log('[Frontend] Starting chat...');
         const response = await fetch(`${API_BASE_URL}/chat/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -53,10 +54,11 @@ async function startChat() {
         });
         
         const data = await response.json();
+        console.log('[Frontend] Chat started:', data);
         addBotMessage(data.response);
         
     } catch (error) {
-        console.error('Error starting chat:', error);
+        console.error('[Frontend] Error starting chat:', error);
         addBotMessage('Sorry, I\'m having trouble connecting. Please refresh the page.');
     }
 }
@@ -70,6 +72,7 @@ async function sendMessage() {
     showTyping();
     
     try {
+        console.log('[Frontend] Sending message:', message);
         const response = await fetch(`${API_BASE_URL}/chat/message`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -81,7 +84,15 @@ async function sendMessage() {
         
         const data = await response.json();
         
-        console.log('API Response:', data);
+        console.log('===== FULL API RESPONSE =====');
+        console.log(JSON.stringify(data, null, 2));
+        console.log('=============================');
+        
+        console.log('[Frontend] Response action:', data.action);
+        console.log('[Frontend] Response stage:', data.stage);
+        console.log('[Frontend] Response data.pdf_available:', data.data?.pdf_available);
+        console.log('[Frontend] Response data.pdf_path:', data.data?.pdf_path);
+        console.log('[Frontend] Response data.sanction_result:', data.data?.sanction_result);
         
         hideTyping();
         addBotMessage(data.response);
@@ -90,38 +101,46 @@ async function sendMessage() {
         handleAction(data.action, data.data);
         
     } catch (error) {
-        console.error('Error sending message:', error);
+        console.error('[Frontend] Error sending message:', error);
         hideTyping();
         addBotMessage('Oops! Something went wrong. Please try again.');
     }
 }
 
 function handleAction(action, data) {
-    console.log('Action:', action);
-    console.log('Data:', data);
+    console.log('[Frontend] handleAction called');
+    console.log('[Frontend] Action:', action);
+    console.log('[Frontend] Data:', JSON.stringify(data, null, 2));
     
     if (action === 'request_document') {
+        console.log('[Frontend] Showing upload area');
         uploadArea.style.display = 'flex';
     } else {
         uploadArea.style.display = 'none';
     }
     
     if (action === 'loan_approved') {
-        console.log('Loan approved! Checking PDF...');
-        console.log('PDF Available:', data.pdf_available);
-        console.log('PDF Path:', data.pdf_path);
+        console.log('[Frontend] ✅ LOAN APPROVED ACTION DETECTED!');
+        console.log('[Frontend] Checking PDF availability...');
+        console.log('[Frontend] pdf_available:', data.pdf_available);
+        console.log('[Frontend] pdf_path:', data.pdf_path);
         
         if (data.pdf_available && data.pdf_path) {
             currentPdfPath = data.pdf_path;
-            console.log('✅ PDF path set:', currentPdfPath);
+            console.log('[Frontend] ✅ PDF path set to:', currentPdfPath);
+            console.log('[Frontend] Opening download modal immediately...');
             
-            setTimeout(() => {
-                console.log('Opening download modal...');
-                downloadModal.style.display = 'flex';
-            }, 1000);
+            // Show modal immediately without delay
+            downloadModal.style.display = 'flex';
+            console.log('[Frontend] ✅ Modal displayed! Style:', downloadModal.style.display);
+            console.log('[Frontend] Modal element:', downloadModal);
         } else {
-            console.error('❌ PDF not available or path missing');
+            console.error('[Frontend] ❌ PDF not available!');
+            console.error('[Frontend] pdf_available:', data.pdf_available);
+            console.error('[Frontend] pdf_path:', data.pdf_path);
         }
+    } else {
+        console.log('[Frontend] Action is not loan_approved, skipping download modal');
     }
 }
 
@@ -137,12 +156,16 @@ async function handleFileUpload() {
     formData.append('session_id', sessionId);
     
     try {
+        console.log('[Frontend] Uploading file:', file.name);
         const response = await fetch(`${API_BASE_URL}/chat/upload`, {
             method: 'POST',
             body: formData
         });
         
         const data = await response.json();
+        
+        console.log('[Frontend] Upload response received');
+        console.log('[Frontend] Upload response:', JSON.stringify(data, null, 2));
         
         uploadStatus.textContent = '✓ Uploaded successfully';
         uploadStatus.className = 'upload-status success';
@@ -154,23 +177,39 @@ async function handleFileUpload() {
             hideTyping();
             addBotMessage(data.response);
             
-            // Trigger next step if needed
-            if (data.next_step === 'underwriting') {
-                setTimeout(() => {
-                    sendMessage();
-                }, 1000);
+            console.log('[Frontend] Checking if approval happened after upload...');
+            console.log('[Frontend] Data action:', data.action);
+            console.log('[Frontend] Data stage:', data.stage);
+            
+            // If the response after upload shows sanction (approval), handle it
+            if (data.action === 'loan_approved' || data.stage === 'completed') {
+                console.log('[Frontend] ✅ Loan approved after file upload!');
+                console.log('[Frontend] Upload response data object:', JSON.stringify(data.data, null, 2));
+                
+                // The upload response has a nested data object
+                const uploadData = data.data || {};
+                
+                handleAction('loan_approved', {
+                    pdf_available: uploadData.pdf_available || false,
+                    pdf_path: uploadData.pdf_path,
+                    sanction_result: uploadData.sanction_result
+                });
             }
-        }, 2000);
+        }, 1000);
         
     } catch (error) {
-        console.error('Error uploading file:', error);
+        console.error('[Frontend] Error uploading file:', error);
         uploadStatus.textContent = '✗ Upload failed';
         uploadStatus.className = 'upload-status';
     }
+    
+    // Reset file input
+    fileInput.value = '';
 }
 
 async function resetChat() {
     try {
+        console.log('[Frontend] Resetting chat...');
         await fetch(`${API_BASE_URL}/chat/reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -203,6 +242,7 @@ async function resetChat() {
         sessionId = 'session_' + Date.now();
         currentPdfPath = null;
         uploadArea.style.display = 'none';
+        downloadModal.style.display = 'none';
         
         // Restart chat
         startChat();
@@ -231,10 +271,16 @@ async function showTestCustomers() {
             `;
             
             item.addEventListener('click', () => {
-                navigator.clipboard.writeText(customer.phone);
                 userInput.value = customer.phone;
                 testModal.style.display = 'none';
                 userInput.focus();
+                
+                // Try to copy to clipboard if available
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(customer.phone).catch(err => {
+                        console.log('Could not copy to clipboard:', err);
+                    });
+                }
             });
             
             customerList.appendChild(item);
@@ -248,43 +294,46 @@ async function showTestCustomers() {
 }
 
 function downloadSanctionLetter() {
+    console.log('[Frontend] Download button clicked');
+    
     if (!currentPdfPath) {
-        console.error('No PDF path available');
+        console.error('[Frontend] ❌ No PDF path available!');
         alert('PDF not available for download');
         return;
     }
     
-    console.log('🔽 Downloading PDF:', currentPdfPath);
+    console.log('[Frontend] 🔽 Downloading PDF:', currentPdfPath);
     
     // Extract just the filename
     const filename = currentPdfPath.includes('/') || currentPdfPath.includes('\\')
         ? currentPdfPath.split(/[/\\]/).pop() 
         : currentPdfPath;
     
-    console.log('📄 Filename:', filename);
+    console.log('[Frontend] 📄 Filename:', filename);
     
     // Build download URL
     const baseUrl = API_BASE_URL.replace('/api', '');
     const downloadUrl = `${baseUrl}/api/download/${filename}`;
     
-    console.log('🔗 Download URL:', downloadUrl);
+    console.log('[Frontend] 🔗 Download URL:', downloadUrl);
     
     // Try opening in new window first
     const win = window.open(downloadUrl, '_blank');
     
     // Fallback: Direct download
     if (!win) {
-        console.log('Popup blocked, trying direct download...');
+        console.log('[Frontend] Popup blocked, trying direct download...');
         
         fetch(downloadUrl)
             .then(response => {
+                console.log('[Frontend] Response status:', response.status);
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 return response.blob();
             })
             .then(blob => {
-                console.log('✅ Blob received, size:', blob.size);
+                console.log('[Frontend] ✅ Blob received, size:', blob.size);
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
@@ -294,12 +343,14 @@ function downloadSanctionLetter() {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
-                console.log('✅ Download triggered');
+                console.log('[Frontend] ✅ Download triggered');
             })
             .catch(error => {
-                console.error('❌ Download failed:', error);
+                console.error('[Frontend] ❌ Download failed:', error);
                 alert(`Failed to download PDF: ${error.message}`);
             });
+    } else {
+        console.log('[Frontend] ✅ Download window opened');
     }
     
     downloadModal.style.display = 'none';

@@ -51,15 +51,15 @@ def send_message():
     response = master.process_message(user_message, context)
     
     # Extract sanction result if available
-    sanction_data = None
+    sanction_data = response.get('sanction_result')
     pdf_filename = None
     
-    if response.get('sanction_result'):
-        sanction_data = response['sanction_result']
-        pdf_filename = sanction_data.get('pdf_filename')
-        print(f"[API] Sanction result found, PDF filename: {pdf_filename}")
+    if sanction_data:
+        pdf_filename = sanction_data.get('pdf_filename') or sanction_data.get('pdf_path')
+        print(f"[API] ✅ Sanction result found, PDF filename: {pdf_filename}")
     
-    return jsonify({
+    # Build response - include all response fields
+    api_response = {
         'session_id': session_id,
         'response': response['response'],
         'stage': response['stage'],
@@ -71,9 +71,20 @@ def send_message():
             'credit_info': response.get('credit_info'),
             'sanction_result': sanction_data,
             'pdf_available': response.get('pdf_available', False),
-            'pdf_path': pdf_filename or response.get('pdf_path')
+            'pdf_path': pdf_filename or response.get('pdf_path'),
+            'loan_amount': response.get('loan_amount'),
+            'rejection_reason': response.get('rejection_reason'),
+            'next_step': response.get('next_step')
         }
-    })
+    }
+    
+    print(f"[API] Response action: {api_response['action']}")
+    print(f"[API] Response stage: {api_response['stage']}")
+    print(f"[API] Response pdf_available: {api_response['data']['pdf_available']}")
+    print(f"[API] Response pdf_path: {api_response['data']['pdf_path']}")
+    print(f"[API] Sanction result: {sanction_data}")
+    
+    return jsonify(api_response)
 
 @app.route('/api/chat/upload', methods=['POST'])
 def upload_document():
@@ -113,15 +124,39 @@ def upload_document():
     
     response = master.process_message('', context)
     
-    return jsonify({
+    # Extract sanction result if available (same as /api/chat/message)
+    sanction_data = response.get('sanction_result')
+    pdf_filename = None
+    
+    if sanction_data:
+        pdf_filename = sanction_data.get('pdf_filename') or sanction_data.get('pdf_path')
+        print(f"[API] ✅ Sanction result found after upload, PDF filename: {pdf_filename}")
+    
+    # Build response with proper data wrapper
+    api_response = {
         'session_id': session_id,
         'file_uploaded': True,
         'filename': filename,
         'response': response['response'],
         'stage': response['stage'],
         'action': response.get('action'),
-        'next_step': response.get('next_step')
-    })
+        'data': {
+            'customer_data': response.get('customer_data'),
+            'loan_terms': response.get('loan_terms'),
+            'suggestions': response.get('suggestions'),
+            'credit_info': response.get('credit_info'),
+            'sanction_result': sanction_data,
+            'pdf_available': response.get('pdf_available', False),
+            'pdf_path': pdf_filename or response.get('pdf_path'),
+            'next_step': response.get('next_step')
+        }
+    }
+    
+    print(f"[API] Upload response action: {api_response['action']}")
+    print(f"[API] Upload response pdf_available: {api_response['data']['pdf_available']}")
+    print(f"[API] Upload response pdf_path: {api_response['data']['pdf_path']}")
+    
+    return jsonify(api_response)
 
 @app.route('/api/download/<path:filename>', methods=['GET'])
 def download_file(filename):
