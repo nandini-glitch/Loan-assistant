@@ -343,8 +343,24 @@ if __name__ == '__main__':
     print("\n" + "="*60)
     print("🚀 BFSI Loan Chatbot Backend Starting...")
     print("="*60)
-    print("📡 Server: http://localhost:5002")
-    print("✅ Manual CORS enabled (no flask-cors needed)")
+    
+    # Get port from environment variable (Render requirement)
+    port = int(os.environ.get('PORT', 5002))
+    
+    # Get host - use 0.0.0.0 for production
+    host = os.environ.get('HOST', '0.0.0.0')
+    
+    # Check if running in production
+    is_production = os.environ.get('RENDER', False)
+    
+    if is_production:
+        print("🌐 Running in PRODUCTION mode on Render")
+    else:
+        print("🔧 Running in DEVELOPMENT mode")
+    
+    print(f"📡 Server: http://{host}:{port}")
+    print("✅ Manual CORS enabled")
     print("="*60 + "\n")
     
-    app.run(debug=True, port=5002, threaded=True, host='0.0.0.0')
+    # Disable debug in production
+    app.run(debug=not is_production, port=port, threaded=True, host=host)
