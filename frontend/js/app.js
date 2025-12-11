@@ -1,7 +1,8 @@
 // Configuration
-const API_BASE_URL = window.location.hostname === 'localhost' 
+    const API_BASE_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:5002/api'
-    : 'https://loan-assistant-backend.onrender.com';  // Replace with your actual backend URL
+    : 'https://loan-assistant-backend.onrender.com/api';
+;
 let sessionId = 'session_' + Date.now();
 let currentPdfPath = null;
 
