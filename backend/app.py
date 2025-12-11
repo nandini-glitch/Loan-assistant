@@ -1,195 +1,243 @@
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+from flask import Flask, request, jsonify, send_file, make_response
 import os
+import traceback
+from functools import wraps
 from agents.master_agent import MasterAgent
 
 app = Flask(__name__)
-CORS(app)
 
-# Store active sessions (in production, use Redis or similar)
+# Store active sessions
 active_sessions = {}
 
-@app.route('/api/health', methods=['GET'])
+# ✅ Manual CORS decorator (no flask-cors needed)
+def add_cors_headers(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Handle OPTIONS preflight
+        if request.method == 'OPTIONS':
+            response = make_response('', 204)
+        else:
+            response = make_response(f(*args, **kwargs))
+        
+        # Add CORS headers to every response
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        
+        return response
+    return decorated_function
+
+@app.route('/api/health', methods=['GET', 'OPTIONS'])
+@add_cors_headers
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'message': 'BFSI Loan Chatbot API is running'})
 
-@app.route('/api/chat/start', methods=['POST'])
+@app.route('/api/chat/start', methods=['POST', 'OPTIONS'])
+@add_cors_headers
 def start_chat():
     """Initialize a new chat session"""
-    session_id = request.json.get('session_id', 'default_session')
-    
-    # Create new master agent for this session
-    master = MasterAgent()
-    active_sessions[session_id] = master
-    
-    # Get initial greeting
-    response = master.process_message('start', None)
-    
-    return jsonify({
-        'session_id': session_id,
-        'response': response['response'],
-        'stage': response['stage'],
-        'action': response.get('action')
-    })
+    try:
+        session_id = request.json.get('session_id', 'default_session')
+        
+        master = MasterAgent()
+        active_sessions[session_id] = master
+        
+        response = master.process_message('start', None)
+        
+        return jsonify({
+            'session_id': session_id,
+            'response': response['response'],
+            'stage': response['stage'],
+            'action': response.get('action')
+        })
+    except Exception as e:
+        print(f"[API /chat/start] ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/chat/message', methods=['POST'])
+@app.route('/api/chat/message', methods=['POST', 'OPTIONS'])
+@add_cors_headers
 def send_message():
     """Process user message"""
-    data = request.json
-    session_id = data.get('session_id', 'default_session')
-    user_message = data.get('message', '')
-    context = data.get('context', {})
-    
-    # Get or create master agent for session
-    if session_id not in active_sessions:
-        active_sessions[session_id] = MasterAgent()
-    
-    master = active_sessions[session_id]
-    
-    # Process message
-    response = master.process_message(user_message, context)
-    
-    # Extract sanction result if available
-    sanction_data = response.get('sanction_result')
-    pdf_filename = None
-    
-    if sanction_data:
-        pdf_filename = sanction_data.get('pdf_filename') or sanction_data.get('pdf_path')
-        print(f"[API] ✅ Sanction result found, PDF filename: {pdf_filename}")
-    
-    # Build response - include all response fields
-    api_response = {
-        'session_id': session_id,
-        'response': response['response'],
-        'stage': response['stage'],
-        'action': response.get('action'),
-        'data': {
-            'customer_data': response.get('customer_data'),
-            'loan_terms': response.get('loan_terms'),
-            'suggestions': response.get('suggestions'),
-            'credit_info': response.get('credit_info'),
-            'sanction_result': sanction_data,
+    try:
+        data = request.json
+        session_id = data.get('session_id', 'default_session')
+        user_message = data.get('message', '')
+        context = data.get('context', {})
+        
+        print(f"\n[API /chat/message] Session: {session_id}")
+        print(f"[API /chat/message] Message: {user_message}")
+        
+        if session_id not in active_sessions:
+            active_sessions[session_id] = MasterAgent()
+        
+        master = active_sessions[session_id]
+        response = master.process_message(user_message, context)
+        
+        api_response = {
+            'session_id': session_id,
+            'response': response['response'],
+            'stage': response['stage'],
+            'action': response.get('action'),
             'pdf_available': response.get('pdf_available', False),
-            'pdf_path': pdf_filename or response.get('pdf_path'),
-            'loan_amount': response.get('loan_amount'),
-            'rejection_reason': response.get('rejection_reason'),
-            'next_step': response.get('next_step')
+            'pdf_path': response.get('pdf_path'),
+            'sanction_result': response.get('sanction_result'),
+            'data': {
+                'customer_data': response.get('customer_data'),
+                'loan_terms': response.get('loan_terms'),
+                'suggestions': response.get('suggestions'),
+                'credit_info': response.get('credit_info'),
+                'pdf_available': response.get('pdf_available', False),
+                'pdf_path': response.get('pdf_path'),
+                'sanction_result': response.get('sanction_result'),
+                'loan_amount': response.get('loan_amount'),
+                'rejection_reason': response.get('rejection_reason'),
+            }
         }
-    }
-    
-    print(f"[API] Response action: {api_response['action']}")
-    print(f"[API] Response stage: {api_response['stage']}")
-    print(f"[API] Response pdf_available: {api_response['data']['pdf_available']}")
-    print(f"[API] Response pdf_path: {api_response['data']['pdf_path']}")
-    print(f"[API] Sanction result: {sanction_data}")
-    
-    return jsonify(api_response)
+        
+        print(f"[API /chat/message] Response action: {api_response['action']}")
+        print(f"[API /chat/message] Response stage: {api_response['stage']}")
+        
+        return jsonify(api_response)
+        
+    except Exception as e:
+        print(f"[API /chat/message] ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/chat/upload', methods=['POST'])
+@app.route('/api/chat/upload', methods=['POST', 'OPTIONS'])
+@add_cors_headers
 def upload_document():
     """Handle document upload (salary slip)"""
-    session_id = request.form.get('session_id', 'default_session')
-    
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': 'Empty filename'}), 400
-    
-    # Save file
-    upload_folder = 'uploads'
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    filename = f"{session_id}_{file.filename}"
-    filepath = os.path.join(upload_folder, filename)
-    file.save(filepath)
-    
-    print(f"[API] File uploaded: {filepath}")
-    
-    # Get master agent and process
-    if session_id not in active_sessions:
-        return jsonify({'error': 'Session not found'}), 404
-    
-    master = active_sessions[session_id]
-    
-    # Process with context
-    context = {
-        'file_uploaded': True,
-        'file_name': filename,
-        'file_path': filepath
-    }
-    
-    response = master.process_message('', context)
-    
-    # Extract sanction result if available (same as /api/chat/message)
-    sanction_data = response.get('sanction_result')
-    pdf_filename = None
-    
-    if sanction_data:
-        pdf_filename = sanction_data.get('pdf_filename') or sanction_data.get('pdf_path')
-        print(f"[API] ✅ Sanction result found after upload, PDF filename: {pdf_filename}")
-    
-    # Build response with proper data wrapper
-    api_response = {
-        'session_id': session_id,
-        'file_uploaded': True,
-        'filename': filename,
-        'response': response['response'],
-        'stage': response['stage'],
-        'action': response.get('action'),
-        'data': {
-            'customer_data': response.get('customer_data'),
-            'loan_terms': response.get('loan_terms'),
-            'suggestions': response.get('suggestions'),
-            'credit_info': response.get('credit_info'),
-            'sanction_result': sanction_data,
-            'pdf_available': response.get('pdf_available', False),
-            'pdf_path': pdf_filename or response.get('pdf_path'),
-            'next_step': response.get('next_step')
+    try:
+        print("\n" + "="*60)
+        print("[API /chat/upload] ===== UPLOAD REQUEST RECEIVED =====")
+        print("="*60)
+        
+        # Print request info
+        print(f"[API /chat/upload] Request method: {request.method}")
+        print(f"[API /chat/upload] Content type: {request.content_type}")
+        print(f"[API /chat/upload] Form keys: {list(request.form.keys())}")
+        print(f"[API /chat/upload] Files keys: {list(request.files.keys())}")
+        
+        session_id = request.form.get('session_id')
+        print(f"[API /chat/upload] Session ID: {session_id}")
+        
+        if not session_id:
+            print("[API /chat/upload] ERROR: No session_id provided")
+            return jsonify({'error': 'No session_id provided'}), 400
+        
+        if 'file' not in request.files:
+            print("[API /chat/upload] ERROR: No file in request")
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        print(f"[API /chat/upload] File: {file.filename}")
+        
+        if file.filename == '':
+            print("[API /chat/upload] ERROR: Empty filename")
+            return jsonify({'error': 'Empty filename'}), 400
+        
+        # Validate file type
+        allowed_extensions = {'.pdf', '.jpg', '.jpeg', '.png'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            print(f"[API /chat/upload] ERROR: Invalid file type: {file_ext}")
+            return jsonify({'error': f'Invalid file type. Allowed: {", ".join(allowed_extensions)}'}), 400
+        
+        # Save file
+        upload_folder = 'uploads'
+        os.makedirs(upload_folder, exist_ok=True)
+        
+        filename = f"{session_id}_{file.filename}"
+        filepath = os.path.join(upload_folder, filename)
+        
+        print(f"[API /chat/upload] Saving to: {filepath}")
+        file.save(filepath)
+        
+        if os.path.exists(filepath):
+            file_size = os.path.getsize(filepath)
+            print(f"[API /chat/upload] ✅ Saved! Size: {file_size} bytes")
+        else:
+            print(f"[API /chat/upload] ❌ File NOT saved!")
+            return jsonify({'error': 'Failed to save file'}), 500
+        
+        # Get master agent
+        if session_id not in active_sessions:
+            print(f"[API /chat/upload] ERROR: Session not found")
+            return jsonify({'error': 'Session not found. Please start a new chat.'}), 404
+        
+        master = active_sessions[session_id]
+        
+        # Process with context
+        context = {
+            'file_uploaded': True,
+            'file_name': filename,
+            'file_path': filepath
         }
-    }
-    
-    print(f"[API] Upload response action: {api_response['action']}")
-    print(f"[API] Upload response pdf_available: {api_response['data']['pdf_available']}")
-    print(f"[API] Upload response pdf_path: {api_response['data']['pdf_path']}")
-    
-    return jsonify(api_response)
+        
+        print(f"[API /chat/upload] Processing...")
+        response = master.process_message('', context)
+        
+        print(f"\n[API /chat/upload] ===== MASTER RESPONSE =====")
+        print(f"[API /chat/upload] Action: {response.get('action')}")
+        print(f"[API /chat/upload] Stage: {response.get('stage')}")
+        print(f"[API /chat/upload] PDF Available: {response.get('pdf_available')}")
+        print(f"[API /chat/upload] PDF Path: {response.get('pdf_path')}")
+        print(f"[API /chat/upload] ===========================\n")
+        
+        api_response = {
+            'session_id': session_id,
+            'file_uploaded': True,
+            'filename': filename,
+            'response': response['response'],
+            'stage': response['stage'],
+            'action': response.get('action'),
+            'pdf_available': response.get('pdf_available', False),
+            'pdf_path': response.get('pdf_path'),
+            'sanction_result': response.get('sanction_result'),
+            'data': {
+                'customer_data': response.get('customer_data'),
+                'loan_terms': response.get('loan_terms'),
+                'credit_info': response.get('credit_info'),
+                'pdf_available': response.get('pdf_available', False),
+                'pdf_path': response.get('pdf_path'),
+                'sanction_result': response.get('sanction_result'),
+            }
+        }
+        
+        print(f"[API /chat/upload] Returning response with action: {api_response['action']}")
+        
+        return jsonify(api_response)
+        
+    except Exception as e:
+        print(f"\n[API /chat/upload] ❌ ERROR: {e}")
+        print(f"[API /chat/upload] Type: {type(e).__name__}")
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
 
-@app.route('/api/download/<path:filename>', methods=['GET'])
+@app.route('/api/download/<path:filename>', methods=['GET', 'OPTIONS'])
+@add_cors_headers
 def download_file(filename):
     """Download generated sanction letter"""
     try:
-        print(f"\n[API] Download request received for: {filename}")
+        print(f"\n[API /download] Requested: {filename}")
         
-        # Construct file path
         if filename.startswith('generated_letters'):
             filepath = filename
         else:
             filepath = os.path.join('generated_letters', filename)
         
-        # Get absolute path
         abs_filepath = os.path.abspath(filepath)
-        print(f"[API] Looking for file at: {abs_filepath}")
+        print(f"[API /download] Looking for: {abs_filepath}")
         
-        # Check if file exists
         if not os.path.exists(abs_filepath):
-            print(f"[API] ❌ File not found!")
-            
-            # List available files for debugging
-            if os.path.exists('generated_letters'):
-                available = os.listdir('generated_letters')
-                print(f"[API] Available files: {available}")
-            
-            return jsonify({
-                'error': 'File not found',
-                'requested': filename,
-                'path': abs_filepath
-            }), 404
+            print(f"[API /download] ❌ File not found!")
+            return jsonify({'error': 'File not found'}), 404
         
-        print(f"[API] ✅ File found! Sending...")
+        print(f"[API /download] ✅ Sending file")
         
         return send_file(
             abs_filepath,
@@ -199,84 +247,104 @@ def download_file(filename):
         )
         
     except Exception as e:
-        print(f"[API] ❌ Error: {e}")
-        import traceback
+        print(f"[API /download] ❌ Error: {e}")
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/chat/reset', methods=['POST'])
+@app.route('/api/chat/reset', methods=['POST', 'OPTIONS'])
+@add_cors_headers
 def reset_chat():
-    """Reset conversation for a session"""
-    session_id = request.json.get('session_id', 'default_session')
-    
-    if session_id in active_sessions:
-        active_sessions[session_id].reset_conversation()
-    
-    return jsonify({
-        'session_id': session_id,
-        'message': 'Conversation reset successfully'
-    })
-
-@app.route('/api/customers', methods=['GET'])
-def get_test_customers():
-    """Get list of test customer phone numbers (for demo purposes)"""
-    from data.customers import CUSTOMER_DATABASE
-    
-    test_customers = []
-    for phone, data in CUSTOMER_DATABASE.items():
-        test_customers.append({
-            'phone': phone,
-            'name': data['name'],
-            'city': data['city'],
-            'pre_approved_limit': data['pre_approved_limit']
+    """Reset conversation"""
+    try:
+        session_id = request.json.get('session_id', 'default_session')
+        
+        if session_id in active_sessions:
+            active_sessions[session_id].reset_conversation()
+        
+        return jsonify({
+            'session_id': session_id,
+            'message': 'Conversation reset successfully'
         })
-    
-    return jsonify({'customers': test_customers})
+    except Exception as e:
+        print(f"[API /chat/reset] ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/debug/pdf-status', methods=['GET'])
+@app.route('/api/customers', methods=['GET', 'OPTIONS'])
+@add_cors_headers
+def get_test_customers():
+    """Get list of test customer phone numbers"""
+    try:
+        from data.customers import CUSTOMER_DATABASE
+        
+        test_customers = []
+        for phone, data in CUSTOMER_DATABASE.items():
+            test_customers.append({
+                'phone': phone,
+                'name': data['name'],
+                'city': data['city'],
+                'pre_approved_limit': data['pre_approved_limit']
+            })
+        
+        return jsonify({'customers': test_customers})
+    except Exception as e:
+        print(f"[API /customers] ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug/pdf-status', methods=['GET', 'OPTIONS'])
+@add_cors_headers
 def pdf_status():
     """Debug: Check PDF generation status"""
-    import os
-    
-    pdf_dir = 'generated_letters'
-    
-    if not os.path.exists(pdf_dir):
+    try:
+        pdf_dir = 'generated_letters'
+        
+        if not os.path.exists(pdf_dir):
+            return jsonify({
+                'exists': False,
+                'message': 'Directory does not exist'
+            })
+        
+        files = os.listdir(pdf_dir)
+        
+        file_details = []
+        for f in files:
+            fpath = os.path.join(pdf_dir, f)
+            file_details.append({
+                'name': f,
+                'size': os.path.getsize(fpath)
+            })
+        
         return jsonify({
-            'exists': False,
-            'path': os.path.abspath(pdf_dir),
-            'message': 'Directory does not exist'
+            'exists': True,
+            'count': len(files),
+            'files': file_details
         })
-    
-    files = os.listdir(pdf_dir)
-    
-    file_details = []
-    for f in files:
-        fpath = os.path.join(pdf_dir, f)
-        file_details.append({
-            'name': f,
-            'size': os.path.getsize(fpath),
-            'path': os.path.abspath(fpath)
-        })
-    
-    return jsonify({
-        'exists': True,
-        'directory': os.path.abspath(pdf_dir),
-        'count': len(files),
-        'files': file_details
-    })
+    except Exception as e:
+        print(f"[API /debug/pdf-status] ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    response = jsonify({'error': 'Not found'})
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response, 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    print(f"[API] Internal Server Error: {error}")
+    traceback.print_exc()
+    response = jsonify({'error': 'Internal server error'})
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response, 500
 
 if __name__ == '__main__':
     print("\n" + "="*60)
     print("🚀 BFSI Loan Chatbot Backend Starting...")
     print("="*60)
-    print("📡 Server running on: http://localhost:5002")
-    print("📋 API endpoints available:")
-    print("   - POST /api/chat/start")
-    print("   - POST /api/chat/message")
-    print("   - POST /api/chat/upload")
-    print("   - GET  /api/download/<filename>")
-    print("   - GET  /api/customers")
-    print("   - GET  /api/debug/pdf-status")
+    print("📡 Server: http://localhost:5002")
+    print("✅ Manual CORS enabled (no flask-cors needed)")
     print("="*60 + "\n")
     
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=5002, threaded=True, host='0.0.0.0')

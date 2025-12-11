@@ -23,6 +23,9 @@ const downloadBtn = document.getElementById('downloadBtn');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[Frontend] 🚀 Application starting...');
+    console.log('[Frontend] API Base URL:', API_BASE_URL);
+    console.log('[Frontend] Session ID:', sessionId);
     startChat();
     attachEventListeners();
 });
@@ -53,6 +56,10 @@ async function startChat() {
             body: JSON.stringify({ session_id: sessionId })
         });
         
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         console.log('[Frontend] Chat started:', data);
         addBotMessage(data.response);
@@ -82,23 +89,21 @@ async function sendMessage() {
             })
         });
         
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
-        console.log('===== FULL API RESPONSE =====');
+        console.log('\n===== FULL API RESPONSE (/chat/message) =====');
         console.log(JSON.stringify(data, null, 2));
-        console.log('=============================');
-        
-        console.log('[Frontend] Response action:', data.action);
-        console.log('[Frontend] Response stage:', data.stage);
-        console.log('[Frontend] Response data.pdf_available:', data.data?.pdf_available);
-        console.log('[Frontend] Response data.pdf_path:', data.data?.pdf_path);
-        console.log('[Frontend] Response data.sanction_result:', data.data?.sanction_result);
+        console.log('=============================================\n');
         
         hideTyping();
         addBotMessage(data.response);
         
-        // Handle special actions
-        handleAction(data.action, data.data);
+        // Process action
+        processApiResponse(data);
         
     } catch (error) {
         console.error('[Frontend] Error sending message:', error);
@@ -107,69 +112,147 @@ async function sendMessage() {
     }
 }
 
-function handleAction(action, data) {
-    console.log('[Frontend] handleAction called');
-    console.log('[Frontend] Action:', action);
-    console.log('[Frontend] Data:', JSON.stringify(data, null, 2));
+/**
+ * ✅ UNIFIED function to process ALL API responses
+ */
+function processApiResponse(data) {
+    console.log('\n[Frontend] ===== processApiResponse =====');
+    console.log('[Frontend] Action:', data.action);
+    console.log('[Frontend] Stage:', data.stage);
     
-    if (action === 'request_document') {
-        console.log('[Frontend] Showing upload area');
+    // Extract PDF info from BOTH possible locations
+    const pdfAvailable = data.pdf_available || data.data?.pdf_available || false;
+    const pdfPath = data.pdf_path || data.data?.pdf_path || null;
+    
+    console.log('[Frontend] PDF Available (computed):', pdfAvailable);
+    console.log('[Frontend] PDF Path (computed):', pdfPath);
+    
+    // Handle document upload request
+    if (data.action === 'request_document') {
+        console.log('[Frontend] 📄 Showing upload area');
         uploadArea.style.display = 'flex';
     } else {
         uploadArea.style.display = 'none';
     }
     
-    if (action === 'loan_approved') {
-        console.log('[Frontend] ✅ LOAN APPROVED ACTION DETECTED!');
-        console.log('[Frontend] Checking PDF availability...');
-        console.log('[Frontend] pdf_available:', data.pdf_available);
-        console.log('[Frontend] pdf_path:', data.pdf_path);
+    // Handle loan approval
+    if (data.action === 'loan_approved' || (data.stage === 'completed' && pdfAvailable)) {
+        console.log('[Frontend] 🎉 LOAN APPROVED!');
         
-        if (data.pdf_available && data.pdf_path) {
-            currentPdfPath = data.pdf_path;
-            console.log('[Frontend] ✅ PDF path set to:', currentPdfPath);
-            console.log('[Frontend] Opening download modal immediately...');
+        if (pdfAvailable && pdfPath) {
+            currentPdfPath = pdfPath;
+            console.log('[Frontend] ✅ PDF path set:', currentPdfPath);
+            console.log('[Frontend] 🎊 Opening download modal...');
             
-            // Show modal immediately without delay
+            // Show modal
             downloadModal.style.display = 'flex';
-            console.log('[Frontend] ✅ Modal displayed! Style:', downloadModal.style.display);
-            console.log('[Frontend] Modal element:', downloadModal);
+            console.log('[Frontend] ✅ Modal display set to:', downloadModal.style.display);
         } else {
-            console.error('[Frontend] ❌ PDF not available!');
-            console.error('[Frontend] pdf_available:', data.pdf_available);
-            console.error('[Frontend] pdf_path:', data.pdf_path);
+            console.error('[Frontend] ❌ PDF info missing!');
+            console.error('[Frontend]   - pdfAvailable:', pdfAvailable);
+            console.error('[Frontend]   - pdfPath:', pdfPath);
+            addBotMessage('⚠️ Loan approved, but sanction letter generation failed. Please contact support.');
         }
-    } else {
-        console.log('[Frontend] Action is not loan_approved, skipping download modal');
     }
+    
+    console.log('[Frontend] =========================================\n');
 }
 
 async function handleFileUpload() {
     const file = fileInput.files[0];
-    if (!file) return;
+    if (!file) {
+        console.log('[Frontend] No file selected');
+        return;
+    }
+    
+    console.log('\n[Frontend] ===== FILE UPLOAD START =====');
+    console.log('[Frontend] File:', file.name);
+    console.log('[Frontend] Size:', file.size, 'bytes');
+    console.log('[Frontend] Type:', file.type);
+    console.log('[Frontend] Session ID:', sessionId);
+    console.log('[Frontend] ================================\n');
+    
+    // Validate file
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+    if (!allowedTypes.includes(file.type)) {
+        console.error('[Frontend] Invalid file type:', file.type);
+        uploadStatus.textContent = '✗ Invalid file type. Please upload PDF, JPG, or PNG';
+        uploadStatus.className = 'upload-status error';
+        fileInput.value = '';
+        return;
+    }
+    
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+        console.error('[Frontend] File too large:', file.size);
+        uploadStatus.textContent = '✗ File too large. Maximum 5MB';
+        uploadStatus.className = 'upload-status error';
+        fileInput.value = '';
+        return;
+    }
     
     uploadStatus.textContent = 'Uploading...';
-    uploadStatus.className = 'upload-status';
+    uploadStatus.className = 'upload-status uploading';
     
     const formData = new FormData();
     formData.append('file', file);
     formData.append('session_id', sessionId);
     
+    // Log FormData contents
+    console.log('[Frontend] FormData contents:');
+    for (let pair of formData.entries()) {
+        console.log(`  ${pair[0]}:`, pair[1]);
+    }
+    
     try {
-        console.log('[Frontend] Uploading file:', file.name);
+        console.log('[Frontend] 📤 Uploading to:', `${API_BASE_URL}/chat/upload`);
+        console.log('[Frontend] Request method: POST');
+        console.log('[Frontend] Sending FormData with file and session_id');
+        
         const response = await fetch(`${API_BASE_URL}/chat/upload`, {
             method: 'POST',
+            mode: 'cors',
             body: formData
         });
         
-        const data = await response.json();
-        
         console.log('[Frontend] Upload response received');
-        console.log('[Frontend] Upload response:', JSON.stringify(data, null, 2));
+        console.log('[Frontend] Response status:', response.status);
+        console.log('[Frontend] Response ok:', response.ok);
+        console.log('[Frontend] Response headers:', {
+            contentType: response.headers.get('content-type'),
+            contentLength: response.headers.get('content-length')
+        });
+        
+        if (!response.ok) {
+            let errorText = 'Unknown error';
+            try {
+                errorText = await response.text();
+                console.error('[Frontend] Error response body:', errorText);
+            } catch (e) {
+                console.error('[Frontend] Could not read error response:', e);
+            }
+            throw new Error(`Upload failed: HTTP ${response.status} - ${errorText}`);
+        }
+        
+        const responseText = await response.text();
+        console.log('[Frontend] Raw response text length:', responseText.length);
+        console.log('[Frontend] Raw response preview:', responseText.substring(0, 200));
+        
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            console.error('[Frontend] JSON parse error:', parseError);
+            console.error('[Frontend] Response was:', responseText);
+            throw new Error('Invalid JSON response from server');
+        }
+        
+        console.log('\n===== FULL API RESPONSE (/chat/upload) =====');
+        console.log(JSON.stringify(data, null, 2));
+        console.log('============================================\n');
         
         uploadStatus.textContent = '✓ Uploaded successfully';
         uploadStatus.className = 'upload-status success';
-        
         uploadArea.style.display = 'none';
         
         showTyping();
@@ -177,46 +260,46 @@ async function handleFileUpload() {
             hideTyping();
             addBotMessage(data.response);
             
-            console.log('[Frontend] Checking if approval happened after upload...');
-            console.log('[Frontend] Data action:', data.action);
-            console.log('[Frontend] Data stage:', data.stage);
+            // Process the upload response
+            processApiResponse(data);
             
-            // If the response after upload shows sanction (approval), handle it
-            if (data.action === 'loan_approved' || data.stage === 'completed') {
-                console.log('[Frontend] ✅ Loan approved after file upload!');
-                console.log('[Frontend] Upload response data object:', JSON.stringify(data.data, null, 2));
-                
-                // The upload response has a nested data object
-                const uploadData = data.data || {};
-                
-                handleAction('loan_approved', {
-                    pdf_available: uploadData.pdf_available || false,
-                    pdf_path: uploadData.pdf_path,
-                    sanction_result: uploadData.sanction_result
-                });
-            }
         }, 1000);
         
     } catch (error) {
-        console.error('[Frontend] Error uploading file:', error);
-        uploadStatus.textContent = '✗ Upload failed';
-        uploadStatus.className = 'upload-status';
+        console.error('\n[Frontend] ===== UPLOAD ERROR =====');
+        console.error('[Frontend] Error name:', error.name);
+        console.error('[Frontend] Error message:', error.message);
+        console.error('[Frontend] Error stack:', error.stack);
+        
+        // Check if it's a network error
+        if (error.message.includes('Load failed') || error.name === 'TypeError') {
+            console.error('[Frontend] ❌ NETWORK ERROR - Backend might not be running or CORS issue');
+            uploadStatus.textContent = '✗ Cannot connect to server. Is the backend running?';
+            addBotMessage('⚠️ Cannot connect to server. Please ensure the backend is running on http://localhost:5002');
+        } else {
+            uploadStatus.textContent = '✗ Upload failed: ' + error.message;
+            addBotMessage('⚠️ Upload failed. Please try again.');
+        }
+        
+        uploadStatus.className = 'upload-status error';
+        console.error('[Frontend] ===================================\n');
+        
+    } finally {
+        fileInput.value = '';
+        console.log('[Frontend] File input cleared');
     }
-    
-    // Reset file input
-    fileInput.value = '';
 }
 
 async function resetChat() {
     try {
-        console.log('[Frontend] Resetting chat...');
+        console.log('[Frontend] 🔄 Resetting chat...');
+        
         await fetch(`${API_BASE_URL}/chat/reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: sessionId })
         });
         
-        // Clear chat
         chatMessages.innerHTML = `
             <div class="welcome-banner">
                 <h2>Welcome! 👋</h2>
@@ -238,36 +321,46 @@ async function resetChat() {
             </div>
         `;
         
-        // Generate new session
         sessionId = 'session_' + Date.now();
         currentPdfPath = null;
         uploadArea.style.display = 'none';
         downloadModal.style.display = 'none';
         
-        // Restart chat
         startChat();
+        console.log('[Frontend] ✅ Chat reset complete');
         
     } catch (error) {
-        console.error('Error resetting chat:', error);
+        console.error('[Frontend] Reset error:', error);
     }
 }
 
 async function showTestCustomers() {
     try {
         const response = await fetch(`${API_BASE_URL}/customers`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
         const data = await response.json();
         
         customerList.innerHTML = '';
+        
+        if (!data.customers || data.customers.length === 0) {
+            customerList.innerHTML = '<p style="padding: 20px; text-align: center;">No test customers available</p>';
+            testModal.style.display = 'flex';
+            return;
+        }
         
         data.customers.forEach(customer => {
             const item = document.createElement('div');
             item.className = 'customer-item';
             item.innerHTML = `
                 <div class="customer-info">
-                    <h4>${customer.name}</h4>
-                    <p>${customer.city} • Pre-approved: ₹${customer.pre_approved_limit.toLocaleString('en-IN')}</p>
+                    <h4>${escapeHtml(customer.name)}</h4>
+                    <p>${escapeHtml(customer.city)} • Pre-approved: ₹${customer.pre_approved_limit.toLocaleString('en-IN')}</p>
                 </div>
-                <div class="customer-phone">${customer.phone}</div>
+                <div class="customer-phone">${escapeHtml(customer.phone)}</div>
             `;
             
             item.addEventListener('click', () => {
@@ -275,11 +368,8 @@ async function showTestCustomers() {
                 testModal.style.display = 'none';
                 userInput.focus();
                 
-                // Try to copy to clipboard if available
                 if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(customer.phone).catch(err => {
-                        console.log('Could not copy to clipboard:', err);
-                    });
+                    navigator.clipboard.writeText(customer.phone).catch(() => {});
                 }
             });
             
@@ -289,12 +379,13 @@ async function showTestCustomers() {
         testModal.style.display = 'flex';
         
     } catch (error) {
-        console.error('Error fetching test customers:', error);
+        console.error('[Frontend] Error loading test customers:', error);
+        alert('Failed to load test customers');
     }
 }
 
 function downloadSanctionLetter() {
-    console.log('[Frontend] Download button clicked');
+    console.log('[Frontend] 🔽 Download button clicked');
     
     if (!currentPdfPath) {
         console.error('[Frontend] ❌ No PDF path available!');
@@ -302,66 +393,62 @@ function downloadSanctionLetter() {
         return;
     }
     
-    console.log('[Frontend] 🔽 Downloading PDF:', currentPdfPath);
+    console.log('[Frontend] 📄 Downloading:', currentPdfPath);
     
-    // Extract just the filename
+    // Extract filename
     const filename = currentPdfPath.includes('/') || currentPdfPath.includes('\\')
         ? currentPdfPath.split(/[/\\]/).pop() 
         : currentPdfPath;
     
     console.log('[Frontend] 📄 Filename:', filename);
     
-    // Build download URL
     const baseUrl = API_BASE_URL.replace('/api', '');
-    const downloadUrl = `${baseUrl}/api/download/${filename}`;
+    const downloadUrl = `${baseUrl}/api/download/${encodeURIComponent(filename)}`;
     
     console.log('[Frontend] 🔗 Download URL:', downloadUrl);
     
-    // Try opening in new window first
+    // Try popup first
     const win = window.open(downloadUrl, '_blank');
     
-    // Fallback: Direct download
     if (!win) {
-        console.log('[Frontend] Popup blocked, trying direct download...');
-        
-        fetch(downloadUrl)
-            .then(response => {
-                console.log('[Frontend] Response status:', response.status);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                return response.blob();
-            })
-            .then(blob => {
-                console.log('[Frontend] ✅ Blob received, size:', blob.size);
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-                console.log('[Frontend] ✅ Download triggered');
-            })
-            .catch(error => {
-                console.error('[Frontend] ❌ Download failed:', error);
-                alert(`Failed to download PDF: ${error.message}`);
-            });
+        console.log('[Frontend] Popup blocked, using direct download...');
+        directDownload(downloadUrl, filename);
     } else {
         console.log('[Frontend] ✅ Download window opened');
+        downloadModal.style.display = 'none';
     }
-    
-    downloadModal.style.display = 'none';
+}
+
+function directDownload(url, filename) {
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const blobUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(blobUrl);
+            document.body.removeChild(a);
+            console.log('[Frontend] ✅ Download complete');
+            downloadModal.style.display = 'none';
+        })
+        .catch(error => {
+            console.error('[Frontend] ❌ Download failed:', error);
+            alert(`Failed to download PDF: ${error.message}`);
+        });
 }
 
 function addUserMessage(text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message user';
-    messageDiv.innerHTML = `
-        <div class="message-content">${escapeHtml(text)}</div>
-    `;
+    messageDiv.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
 }
@@ -369,9 +456,7 @@ function addUserMessage(text) {
 function addBotMessage(text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message bot';
-    messageDiv.innerHTML = `
-        <div class="message-content">${escapeHtml(text)}</div>
-    `;
+    messageDiv.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
 }
@@ -397,12 +482,18 @@ function escapeHtml(text) {
     return div.innerHTML.replace(/\n/g, '<br>');
 }
 
-// Close modal on outside click
+// Close modals on outside click
 window.addEventListener('click', (e) => {
-    if (e.target === testModal) {
-        testModal.style.display = 'none';
-    }
-    if (e.target === downloadModal) {
-        downloadModal.style.display = 'none';
+    if (e.target === testModal) testModal.style.display = 'none';
+    if (e.target === downloadModal) downloadModal.style.display = 'none';
+});
+
+// Close modals on Escape key
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        if (testModal.style.display === 'flex') testModal.style.display = 'none';
+        if (downloadModal.style.display === 'flex') downloadModal.style.display = 'none';
     }
 });
+
+console.log('[Frontend] 🚀 App.js loaded successfully');
